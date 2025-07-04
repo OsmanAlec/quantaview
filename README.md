@@ -1,2 +1,3 @@
 Candletrack
-Will think of a better name
+
+Initial commit
