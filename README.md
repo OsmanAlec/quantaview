@@ -1,7 +1,7 @@
 # Real-time stock portfolio tracker
-Currently initialised - displays only apple and only last updated price.
-Socket.io client used to communicate between the web browser and the server
-Finnhub API (websocket) primary data source for real-time stock updates.
+**Currently initialised** - displays only apple and only last updated price.  
+**Socket.io client** used to communicate between the web browser and the server  
+**Finnhub API (websocket)** primary data source for real-time stock updates.  
 
 # TODO list:
 - add previous prices (historic data)
