@@ -3,6 +3,11 @@
 **Socket.io client** used to communicate between the web browser and the server  
 **Finnhub API (websocket)** primary data source for real-time stock updates.  
 
+# Working on
+- candlesticks
+- storing previous prices
+
+  
 # TODO list:
 - add previous prices (historic data)
 - add candlesticks
