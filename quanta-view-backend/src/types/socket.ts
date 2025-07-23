@@ -1,9 +1,18 @@
 export interface FinnhubTrade {
-  symbol: string;
-  price: number;
-  timestamp: number;
+  s: string;
+  p: number;
+  t: number;
+  v: number;
+  c?: string[];
+}
+
+export interface Candlestick {
+  time: number; // timestamp for the candle's start (in seconds)
+  open: number;
+  high: number;
+  low: number;
+  close: number;
   volume: number;
-  conditions?: string[];
 }
 
 export interface FinnhubWebSocketMessage {
@@ -19,6 +28,9 @@ export interface ServerToClientEvents {
   'connect': () => void;
   'disconnect': () => void;
   'error': (error: string) => void;
+  'initialCandleHistory': (data: {symbol: string, history: Candlestick[] }) => void;
+  'candle-completed': (candle: Candlestick) => void;
+  'currentFormingCandle': (data: { symbol: string, candle: Candlestick }) => void;
 }
 
 // Events emitted by the client to the server

@@ -1,6 +1,7 @@
 import express from 'express'; 
 import { createServer } from 'http';
 import { Server, Socket as SocketIOSocket } from 'socket.io';
+import { processNewTrade, getCandleHistory, getCurrentFormingCandles } from './candleAggregator';
 import WebSocket from 'ws'; // For Finnhub WebSocket
 import dotenv from 'dotenv';
 
@@ -55,7 +56,13 @@ io.on("connection", (socket: SocketIOSocket<ClientToServerEvents, ServerToClient
           const data: FinnhubWebSocketMessage = JSON.parse(event.data.toString());
           if (data.type === 'trade' && data.data) {
             io.emit("stock-update", data.data);
+            data.data.forEach(trade => {
+              processNewTrade(trade, io);
+            });
             }
+          else {
+            console.log("Finnhub message:" + data.type + data);
+          }
         } catch (e) {
           console.error(`Error parsing Finnhub message for ${symbol}:`, e);
         }
@@ -74,7 +81,16 @@ io.on("connection", (socket: SocketIOSocket<ClientToServerEvents, ServerToClient
       activeFinnhubSubscriptions.set(symbol, { ws: finnhubWs, refCount: 1 });
     }
 
-    // socket.join(symbol);
+    const history = getCandleHistory(symbol);
+    if (history.length > 0){
+      socket.emit('initialCandleHistory', { symbol, history });
+    }
+
+    const formingCandle = getCurrentFormingCandles()[symbol];
+    if (formingCandle){
+      socket.emit('currentFormingCandle', { symbol, candle: formingCandle});
+    }
+
   });
 
   socket.on("unsubscribeFromStock", (symbol: string) => {
