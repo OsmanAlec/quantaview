@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+
 import CandleChart from "./_components/CandleChart";
 
 interface Candlestick {
@@ -17,6 +18,19 @@ interface StockPriceData {
   timestamp: string;
 }
 
+const suggestedStocks: string[] = [
+  "AAPL",
+  "MSFT",
+  "GOOGL",
+  "AMZN",
+  "TSLA",
+  "NVDA",
+  "META",
+  "NFLX",
+  "AMD",
+  "INTC",
+];
+
 const SOCKET_SERVER_URL =
   process.env.NEXT_PUBLIC_SOCKET_SERVER_URL || "ws://localhost:4000";
 
@@ -27,6 +41,7 @@ export default function HomePage() {
   const [symbolInput, setSymbolInput] = useState("AAPL");
   const [isConnected, setIsConnected] = useState(false);
   const [activeSubscriptions, setActiveSubscriptions] = useState<string[]>([]);
+  const [data, setData] = useState<{ symbol: string } | null>(null);
 
   const [candleHistory, setCandleHistory] = useState<{
     [symbol: string]: Candlestick[];
@@ -38,6 +53,12 @@ export default function HomePage() {
   const wsConnections = useRef<Record<string, WebSocket>>({});
 
   useEffect(() => {
+    const stored = localStorage.getItem("userData");
+
+    if (stored) {
+      setActiveSubscriptions(JSON.parse(stored));
+    }
+
     return () => {
       // Close all active connections on unmount
       Object.values(wsConnections.current).forEach((ws) => {
@@ -60,7 +81,11 @@ export default function HomePage() {
 
           ws.send(JSON.stringify({ type: "subscribe", symbol: symbol }));
 
-          setActiveSubscriptions((prev) => [...prev, symbol]);
+          setActiveSubscriptions((prev) => {
+            const updated = [...prev, symbol];
+            localStorage.setItem("userData", JSON.stringify(updated));
+            return updated;
+          });
           setCandleHistory((prev) => ({ ...prev, [symbol]: [] }));
           setStockPrices((prev) => ({
             ...prev,
@@ -121,112 +146,96 @@ export default function HomePage() {
     }
   }, [symbolInput, activeSubscriptions]);
 
-  const handleUnsubscribe = useCallback(() => {
-    const symbol = symbolInput.toUpperCase();
+  const handleUnsubscribe = useCallback((symbol: string) => {
     if (symbol && wsConnections.current[symbol]) {
-      wsConnections.current[symbol].close(); // Cleanup state
-
+      wsConnections.current[symbol].close();
       delete wsConnections.current[symbol];
-      setActiveSubscriptions((prev) => prev.filter((s) => s !== symbol));
+
+      setActiveSubscriptions((prev) => {
+        const updated = prev.filter((s) => s !== symbol);
+        localStorage.setItem("userData", JSON.stringify(updated));
+        return updated;
+      });
+
       setStockPrices((prev) => {
         const copy = { ...prev };
         delete copy[symbol];
         return copy;
       });
+
       setCandleHistory((prev) => {
         const copy = { ...prev };
         delete copy[symbol];
         return copy;
       });
+
       setCurrentFormingCandles((prev) => {
         const copy = { ...prev };
         delete copy[symbol];
         return copy;
       });
     }
-  }, [symbolInput]);
+  }, []);
 
   return (
     <div style={{ padding: 20, fontFamily: "Arial, sans-serif" }}>
       <h1>Real-Time Stock Tracker</h1>
-      <div style={{ marginBottom: 20 }}>
-        <input
-          type="text"
-          value={symbolInput}
-          onChange={(e) => setSymbolInput(e.target.value)}
-          placeholder="AAPL"
-          style={{ padding: 8, marginRight: 10, width: 200 }}
-        />
-        <button
-          onClick={handleSubscribe}
-          style={{
-            padding: "8px 15px",
-            cursor: "pointer",
-            marginRight: 10,
-            backgroundColor: "#4CAF50",
-            color: "white",
-            border: "none",
-            borderRadius: 4,
-          }}
-        >
-          Subscribe
-        </button>
-        <button
-          onClick={handleUnsubscribe}
-          style={{
-            padding: "8px 15px",
-            cursor: "pointer",
-            backgroundColor: "#f44336",
-            color: "white",
-            border: "none",
-            borderRadius: 4,
-          }}
-        >
-          Unsubscribe
-        </button>
-      </div>
-      <h2>Active Subscriptions:</h2>
+      <h2 className="text-xl font-semibold mb-3">Suggested Stocks:</h2>
+      <ul className="space-y-3">
+        {suggestedStocks.map((symbol) => (
+          <li
+            key={symbol}
+            className="flex items-center justify-between p-3 border rounded-lg bg-gray-50 shadow-sm"
+          >
+            <span className="font-bold text-lg text-gray-800">{symbol}</span>
+            <button
+              onClick={() => {
+                setSymbolInput(symbol);
+                handleSubscribe();
+              }}
+              className="cursor-pointer px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition"
+            >
+              Subscribe
+            </button>
+          </li>
+        ))}
+      </ul>
+      <h2 className="text-xl font-semibold mb-3">Active Subscriptions:</h2>
       {activeSubscriptions.length > 0 ? (
-        <ul style={{ listStyleType: "none", padding: 0 }}>
+        <ul className="space-y-2">
           {activeSubscriptions.map((symbol) => (
             <li
               key={symbol}
-              style={{
-                display: "inline-block",
-                background: "#e0e0e0",
-                padding: "5px 10px",
-                borderRadius: 5,
-                margin: 5,
-                fontWeight: "bold",
-              }}
+              className="flex items-center justify-between bg-gray-200 px-3 py-2 rounded-md font-bold"
             >
               {symbol}
+              <button
+                onClick={() => handleUnsubscribe(symbol)}
+                className="cursor-pointer ml-2 px-2 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition"
+              >
+                ✕
+              </button>
             </li>
           ))}
         </ul>
       ) : (
-        <p>No active subscriptions.</p>
+        <p className="text-gray-500">No active subscriptions.</p>
       )}
-      <h2>Live Price:</h2>
+
+      <h2 className="text-xl font-semibold mt-6 mb-3">Live Price:</h2>
       {activeSubscriptions.length > 0 ? (
-        <div>
+        <div className="space-y-4">
           {activeSubscriptions.map((symbol) => {
             const data = stockPrices[symbol];
             return (
               <div
                 key={symbol}
-                style={{
-                  marginBottom: 10,
-                  padding: 10,
-                  border: "1px solid #ccc",
-                  borderRadius: 5,
-                  backgroundColor: "#f9f9f9",
-                }}
+                className="p-4 border rounded-md bg-gray-50 shadow-sm"
               >
-                <h3>{symbol}</h3>
-                <p>
+                <h3 className="text-lg font-semibold">{symbol}</h3>
+                <p className="text-sm text-gray-700">
                   <strong>Price:</strong> $
-                  {data?.price ? data.price.toFixed(2) : "N/A"} (Last Updated:
+                  {data?.price ? data.price.toFixed(2) : "N/A"} (Last Updated:{" "}
                   {data?.timestamp || "N/A"})
                 </p>
               </div>
@@ -234,11 +243,16 @@ export default function HomePage() {
           })}
         </div>
       ) : (
-        <p>No tick-based price data yet. Subscribe to a symbol above.</p>
+        <p className="text-gray-500">
+          No tick-based price data yet. Subscribe to a symbol above.
+        </p>
       )}
-      <h2>Candlestick Data (aggregated backend):</h2> 
+
+      <h2 className="text-xl font-semibold mt-6 mb-3">
+        Candlestick Data (aggregated backend):
+      </h2>
       {activeSubscriptions.length > 0 ? (
-        <div>
+        <div className="space-y-4">
           {activeSubscriptions.map((symbol) => {
             const candles = candleHistory[symbol] || [];
             const currentForming = currentFormingCandles[symbol];
@@ -246,63 +260,60 @@ export default function HomePage() {
             return (
               <div
                 key={symbol}
-                style={{
-                  marginBottom: 10,
-                  padding: 10,
-                  border: "1px solid #ccc",
-                  borderRadius: 5,
-                  backgroundColor: "#f9f9f9",
-                }}
+                className="p-4 border rounded-md bg-gray-50 shadow-sm"
               >
                 <CandleChart
                   candleHistory={candles}
                   formingCandle={currentForming}
                 />
 
-                <h3>{symbol} Candlesticks</h3>
+                <h3 className="text-lg font-semibold mt-3">
+                  {symbol} Candlesticks
+                </h3>
+
                 {candles.length > 0 && (
-                  <div>
-                    <h4>Completed Candles ({candles.length}):</h4> 
-                    <ul style={{ listStyleType: "none", padding: 0 }}>
+                  <div className="mt-2">
+                    <h4 className="font-medium text-sm mb-1">
+                      Completed Candles ({candles.length}):
+                    </h4>
+                    <ul className="space-y-1 text-sm">
                       {candles.slice(-5).map((c) => (
-                        <li
-                          key={c.timestamp}
-                          style={{ marginBottom: 2, fontSize: "0.9em" }}
-                        >
+                        <li key={c.timestamp}>
                           <span
-                            style={{
-                              fontWeight: "bold",
-                              color: c.close >= c.open ? "green" : "red",
-                            }}
+                            className={`font-bold ${
+                              c.close >= c.open
+                                ? "text-green-600"
+                                : "text-red-600"
+                            }`}
                           >
                             {new Date(c.timestamp).toLocaleTimeString()}:
-                          </span>
-                          O:{c.open.toFixed(2)} H:
-                          {c.high.toFixed(2)} L: {c.low.toFixed(2)} C:
-                          {c.close.toFixed(2)} V:{c.volume}
+                          </span>{" "}
+                          O:{c.open.toFixed(2)} H:{c.high.toFixed(2)} L:
+                          {c.low.toFixed(2)} C:{c.close.toFixed(2)} V:{c.volume}
                         </li>
                       ))}
                     </ul>
                   </div>
                 )}
+
                 {currentForming && (
-                  <div>
-                    <h4>Current Forming Candle:</h4>
+                  <div className="mt-3">
+                    <h4 className="font-medium text-sm">
+                      Current Forming Candle:
+                    </h4>
                     <p
-                      style={{
-                        fontSize: "0.9em",
-                        color:
-                          currentForming.close >= currentForming.open
-                            ? "green"
-                            : "red",
-                      }}
+                      className={`text-sm ${
+                        currentForming.close >= currentForming.open
+                          ? "text-green-600"
+                          : "text-red-600"
+                      }`}
                     >
-                      <span style={{ fontWeight: "bold" }}>
+                      <span className="font-bold">
                         {new Date(
                           currentForming.timestamp
                         ).toLocaleTimeString()}
                         :
-                      </span>
+                      </span>{" "}
                       O:{currentForming.open.toFixed(2)} H:
                       {currentForming.high.toFixed(2)} L:
                       {currentForming.low.toFixed(2)} C:
@@ -311,15 +322,18 @@ export default function HomePage() {
                     </p>
                   </div>
                 )}
+
                 {!candles.length && !currentForming && (
-                  <p>No candlestick data yet for {symbol}.</p>
+                  <p className="text-gray-500 text-sm mt-2">
+                    No candlestick data yet for {symbol}.
+                  </p>
                 )}
               </div>
             );
           })}
         </div>
       ) : (
-        <p>
+        <p className="text-gray-500">
           No candlestick data available. Subscribe to symbols to receive data.
         </p>
       )}
