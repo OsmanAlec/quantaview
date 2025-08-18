@@ -32,7 +32,7 @@ const suggestedStocks: string[] = [
 ];
 
 const SOCKET_SERVER_URL =
-  process.env.NEXT_PUBLIC_SOCKET_SERVER_URL || "ws://localhost:4000";
+  process.env.NEXT_PUBLIC_SOCKET_SERVER_URL || "ws://localhost:4000/ws";
 
 export default function HomePage() {
   const [stockPrices, setStockPrices] = useState<
@@ -42,6 +42,7 @@ export default function HomePage() {
   const [isConnected, setIsConnected] = useState(false);
   const [activeSubscriptions, setActiveSubscriptions] = useState<string[]>([]);
   const [data, setData] = useState<{ symbol: string } | null>(null);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
 
   const [candleHistory, setCandleHistory] = useState<{
     [symbol: string]: Candlestick[];
@@ -50,148 +51,205 @@ export default function HomePage() {
     [symbol: string]: Candlestick | undefined;
   }>({});
 
-  const wsConnections = useRef<Record<string, WebSocket>>({});
+  const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const stored = localStorage.getItem("userData");
+    ws.current = new WebSocket(SOCKET_SERVER_URL);
 
-    if (stored) {
-      setActiveSubscriptions(JSON.parse(stored));
-    }
+    ws.current.onopen = () => {
+      console.log("Connected to WebSocket server");
+      setIsConnected(true);
 
-    return () => {
-      // Close all active connections on unmount
-      Object.values(wsConnections.current).forEach((ws) => {
-        ws.close();
-      });
+      // Once the connection is open, load and resubscribe
+      const stored = localStorage.getItem("userData");
+      if (stored) {
+        try {
+          const data: string[] = JSON.parse(stored);
+          data.forEach((symbol) => {
+            handleSubscribe(symbol);
+          });
+        } catch (error) {
+          console.error("Failed to parse localStorage data:", error);
+        }
+      }
     };
-  }, []);
 
-  const handleSubscribe = useCallback(() => {
-    const symbol = symbolInput.toUpperCase();
+    ws.current.onopen = () => {
+      console.log("Connected to WebSocket server");
+      setIsConnected(true);
+    };
 
-    if (symbol && !activeSubscriptions.includes(symbol)) {
-      try {
-        const ws = new WebSocket(`${SOCKET_SERVER_URL}/ws/${symbol}`);
-        wsConnections.current[symbol] = ws;
+    ws.current.onclose = () => {
+      console.log("Disconnected");
+      setIsConnected(false);
+    };
 
-        ws.onopen = () => {
-          console.log(`Connected to WebSocket for ${symbol}`);
-          setIsConnected(true);
+    ws.current.onerror = (err) => console.error("WebSocket error:", err);
 
-          ws.send(JSON.stringify({ type: "subscribe", symbol: symbol }));
+    ws.current.onmessage = (event) => {
+      const data = JSON.parse(event.data);
 
+      switch (data.type) {
+        case "subscription-confirmed":
           setActiveSubscriptions((prev) => {
-            const updated = [...prev, symbol];
+            // Only add if it's not already there
+            if (!prev.includes(data.symbol)) {
+              const updated = [...prev, data.symbol];
+              // Update localStorage
+              localStorage.setItem("userData", JSON.stringify(updated));
+              return updated;
+            }
+            return prev;
+          });
+          break;
+
+        case "unsubscription-confirmed":
+          setActiveSubscriptions((prev) => {
+            const updated = prev.filter((s) => s !== data.symbol);
             localStorage.setItem("userData", JSON.stringify(updated));
             return updated;
           });
-          setCandleHistory((prev) => ({ ...prev, [symbol]: [] }));
+          setStockPrices((prev) => {
+            const copy = { ...prev };
+            delete copy[data.symbol];
+            return copy;
+          });
+          setCandleHistory((prev) => {
+            const copy = { ...prev };
+            delete copy[data.symbol];
+            return copy;
+          });
+          setCurrentFormingCandles((prev) => {
+            const copy = { ...prev };
+            delete copy[data.symbol];
+            return copy;
+          });
+          break;
+
+        case "search_results":
+          setSearchResults(data.results);
+          break;
+
+        case "price-update":
           setStockPrices((prev) => ({
             ...prev,
-            [symbol]: { price: 0, timestamp: "N/A" },
+            [data.symbol]: { price: data.price, timestamp: data.timestamp },
           }));
-        };
-
-        ws.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-
-          switch (data.type) {
-            case "initialCandleHistory":
-              setCandleHistory((prev) => ({
-                ...prev,
-                [data.symbol]: data.history,
-              }));
-              break;
-            case "candle-completed":
-              setCandleHistory((prev) => {
-                const existingHistory = prev[data.symbol] || [];
-                const lastCandle = existingHistory[existingHistory.length - 1];
-
-                if (
-                  lastCandle &&
-                  lastCandle.timestamp === data.candle.timestamp
-                ) {
-                  return prev;
-                }
-
-                return {
-                  ...prev,
-                  [data.symbol]: [...existingHistory, data.candle],
-                };
-              });
-              break;
-            case "currentFormingCandle":
-              setCurrentFormingCandles((prev) => ({
-                ...prev,
-                [data.symbol]: data.candle,
-              }));
-              break;
-          }
-        };
-
-        ws.onclose = () => {
-          console.log(`WebSocket disconnected for ${symbol}`);
-          if (Object.keys(wsConnections.current).length === 1) {
-            setIsConnected(false);
-          }
-        };
-
-        ws.onerror = (err) => {
-          console.error(`WebSocket error for ${symbol}:`, err);
-        };
-      } catch (err) {
-        console.error("Failed to connect to WebSocket:", err);
+          break;
+        case "initialCandleHistory":
+          setCandleHistory((prev) => ({
+            ...prev,
+            [data.symbol]: data.history,
+          }));
+          break;
+        case "candle-completed":
+          setCandleHistory((prev) => ({
+            ...prev,
+            [data.symbol]: [...(prev[data.symbol] || []), data.candle],
+          }));
+          break;
+        case "currentFormingCandle":
+          setCurrentFormingCandles((prev) => ({
+            ...prev,
+            [data.symbol]: data.candle,
+          }));
+          break;
+        default:
+          console.warn("Unknown WS message:", data);
       }
-    }
-  }, [symbolInput, activeSubscriptions]);
+    };
 
-  const handleUnsubscribe = useCallback((symbol: string) => {
-    if (symbol && wsConnections.current[symbol]) {
-      wsConnections.current[symbol].close();
-      delete wsConnections.current[symbol];
+    return () => {
+      ws.current?.close();
+    };
+  }, []);
 
-      setActiveSubscriptions((prev) => {
-        const updated = prev.filter((s) => s !== symbol);
-        localStorage.setItem("userData", JSON.stringify(updated));
-        return updated;
-      });
-
-      setStockPrices((prev) => {
-        const copy = { ...prev };
-        delete copy[symbol];
-        return copy;
-      });
-
-      setCandleHistory((prev) => {
-        const copy = { ...prev };
-        delete copy[symbol];
-        return copy;
-      });
-
-      setCurrentFormingCandles((prev) => {
-        const copy = { ...prev };
-        delete copy[symbol];
-        return copy;
-      });
+  const handleSubscribe = useCallback((symbol: string) => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      ws.current.send(
+        JSON.stringify({
+          type: "subscribe",
+          symbol: symbol,
+        })
+      );
     }
   }, []);
 
+  const handleUnsubscribe = (symbol: string) => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      ws.current.send(
+        JSON.stringify({
+          type: "unsubscribe",
+          symbol: symbol,
+        })
+      );
+    }
+  };
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      ws.current.send(
+        JSON.stringify({
+          type: "search",
+          query: symbolInput,
+        })
+      );
+    }
+  };
+
   return (
-    <div style={{ padding: 20, fontFamily: "Arial, sans-serif" }}>
-      <h1>Real-Time Stock Tracker</h1>
+    <div className="p-5">
+      <h1 className="text-2xl text-center font-bold">
+        Real-Time Stock Tracker
+      </h1>
+      <form className="flex flex-col" onSubmit={handleSearch}>
+        <input
+          type="text"
+          value={symbolInput}
+          onChange={(e) => setSymbolInput(e.target.value)}
+          placeholder="Search by ticker..."
+          className="outline-none flex-none rounded-2xl px-5 border-1"
+        ></input>
+        <button type="submit">Search</button>
+      </form>
+      {searchResults.length > 0 && (
+        <div className="mt-6">
+          <h2 className="text-xl font-semibold mb-3">Search Results:</h2>
+          <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {searchResults.map((result) => (
+              <li
+                key={result.symbol}
+                className="flex flex-col items-center p-4 border rounded-lg bg-gray-50 shadow-sm"
+              >
+                <span className="font-bold text-lg text-gray-800">
+                  {result.displaySymbol}
+                </span>
+                <span className="text-sm text-gray-600 text-center">
+                  {result.description}
+                </span>
+                <button
+                  onClick={() => handleSubscribe(result.symbol)}
+                  className="mt-2 px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition"
+                >
+                  Subscribe
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <h2 className="text-xl font-semibold mb-3">Suggested Stocks:</h2>
-      <ul className="space-y-3">
+      <ul className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {suggestedStocks.map((symbol) => (
           <li
             key={symbol}
-            className="flex items-center justify-between p-3 border rounded-lg bg-gray-50 shadow-sm"
+            className="flex flex-col items-center justify-between p-4 border rounded-lg bg-gray-50 shadow-sm h-24"
           >
             <span className="font-bold text-lg text-gray-800">{symbol}</span>
             <button
               onClick={() => {
-                setSymbolInput(symbol);
-                handleSubscribe();
+                handleSubscribe(symbol);
               }}
               className="cursor-pointer px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition"
             >
@@ -202,11 +260,11 @@ export default function HomePage() {
       </ul>
       <h2 className="text-xl font-semibold mb-3">Active Subscriptions:</h2>
       {activeSubscriptions.length > 0 ? (
-        <ul className="space-y-2">
+        <ul className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {activeSubscriptions.map((symbol) => (
             <li
               key={symbol}
-              className="flex items-center justify-between bg-gray-200 px-3 py-2 rounded-md font-bold"
+              className="flex items-center justify-between bg-gray-200 px-3 py-2 rounded-md font-bold flex-1"
             >
               {symbol}
               <button
